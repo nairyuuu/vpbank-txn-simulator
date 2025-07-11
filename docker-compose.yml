@@ -1,0 +1,105 @@
+version: '3.8'
+
+services:
+  kafka:
+    image: bitnami/kafka:3.7.0
+    hostname: kafka
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      # KRaft settings
+      KAFKA_ENABLE_KRAFT: yes
+      KAFKA_CFG_PROCESS_ROLES: broker,controller
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CFG_LISTENERS: PLAINTEXT://kafka:29092,CONTROLLER://kafka:9093,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CFG_NODE_ID: 1
+      KAFKA_KRAFT_CLUSTER_ID: abcdefghijklmnopqrstuv
+      # Other settings
+      KAFKA_CFG_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CFG_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_CFG_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: true
+      KAFKA_CFG_NUM_PARTITIONS: 3
+      ALLOW_PLAINTEXT_LISTENER: yes
+    volumes:
+      - kafka-data:/bitnami/kafka
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics.sh --bootstrap-server localhost:9092 --list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - vpbank-network
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    depends_on:
+      - kafka
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+    restart: unless-stopped
+    networks:
+      - vpbank-network
+
+  txn-simulator:
+    build: .
+    container_name: vpbank-txn-simulator
+    depends_on:
+      kafka:
+        condition: service_healthy
+      init-kafka:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      MIN_INTERVAL: 0.5
+      MAX_INTERVAL: 3.0
+      BATCH_SIZE: 50
+      LOG_LEVEL: INFO
+    restart: unless-stopped
+    networks:
+      - vpbank-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  init-kafka:
+    image: bitnami/kafka:3.7.0
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: [ '/bin/sh', '-c' ]
+    command: |
+      "
+      # Wait for Kafka to be ready
+      echo 'Waiting for Kafka to be ready...'
+      kafka-topics.sh --bootstrap-server kafka:29092 --list
+      
+      # Create topics
+      echo 'Creating Kafka topics...'
+      kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic IBFT --partitions 3 --replication-factor 1
+      kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic qr_payments --partitions 3 --replication-factor 1
+      kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic topup_wallet --partitions 3 --replication-factor 1
+      
+      echo 'Topics created successfully!'
+      kafka-topics.sh --bootstrap-server kafka:29092 --list
+      "
+    networks:
+      - vpbank-network
+
+volumes:
+  kafka-data:
+
+networks:
+  vpbank-network:
+    driver: bridge

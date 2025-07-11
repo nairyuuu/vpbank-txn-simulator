@@ -30,6 +30,10 @@ mock-txn-data/
 ├── docker-compose.yml
 ├── kafka/
 │   └── config/
+│       └── server.properties
+├── scripts/
+│   ├── start-kraft.sh
+│   └── start-kraft.bat
 ├── src/
 │   ├── __init__.py
 │   ├── main.py
@@ -44,11 +48,37 @@ mock-txn-data/
 
 ## Getting Started
 
-1. Clone the repository
-2. Install dependencies: `pip install -r requirements.txt`
-3. Configure environment variables in `.env`
-4. Start Kafka: `docker-compose up -d`
-5. Run the simulator: `python src/main.py`
+### Quick Start with Docker (Recommended)
+```bash
+# Clone the repository
+git clone <repository-url>
+cd vpbank-txn-simulator
+
+# Start the entire stack
+docker-compose up -d
+
+# View logs
+docker-compose logs -f txn-simulator
+
+# Stop the stack
+docker-compose down
+```
+
+### Manual Setup (Development)
+1. Install dependencies: `pip install -r requirements.txt`
+2. Configure environment variables in `.env`
+3. Start Kafka: `docker-compose up -d kafka kafka-ui`
+4. Run the simulator: `python -m src.main`
+
+### Services
+- **Kafka**: `localhost:9092` (KRaft mode)
+- **Kafka UI**: `http://localhost:8080`
+- **Transaction Simulator**: Runs automatically in Docker
+
+### Monitoring
+- **Kafka Topics**: IBFT, qr_payments, topup_wallet
+- **Kafka UI**: Monitor topics, messages, and consumer groups
+- **Logs**: `docker-compose logs -f txn-simulator`
 
 ## Features
 
