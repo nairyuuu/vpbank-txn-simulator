@@ -1,0 +1,142 @@
+version: '3.8'
+
+services:
+  kafka:
+    image: bitnami/kafka:3.7.0
+    hostname: kafka
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      # All environment variables as strings for cloud compatibility
+      KAFKA_ENABLE_KRAFT: "yes"
+      KAFKA_CFG_PROCESS_ROLES: "broker,controller"
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CFG_LISTENERS: "PLAINTEXT://kafka:29092,CONTROLLER://kafka:9093,PLAINTEXT_HOST://0.0.0.0:9092"
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
+      KAFKA_CFG_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092"
+      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_CFG_NODE_ID: "1"
+      KAFKA_KRAFT_CLUSTER_ID: "abcdefghijklmnopqrstuv"
+      
+      # Cloud-optimized settings
+      KAFKA_CFG_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_CFG_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_CFG_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_CFG_NUM_PARTITIONS: "1"
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+      
+      # Memory optimization
+      KAFKA_HEAP_OPTS: "-Xmx256M -Xms128M"
+      KAFKA_CFG_LOG_RETENTION_HOURS: "1"
+      KAFKA_CFG_LOG_SEGMENT_BYTES: "10485760"
+      
+    volumes:
+      - kafka-data:/bitnami/kafka
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 45s
+      timeout: 15s
+      retries: 3
+      start_period: 90s
+    networks:
+      - vpbank-network
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: "cloud-cluster"
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: "kafka:29092"
+      LOGGING_LEVEL_ROOT: "WARN"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+    restart: unless-stopped
+    networks:
+      - vpbank-network
+
+  txn-simulator:
+    build: .
+    container_name: vpbank-txn-simulator
+    depends_on:
+      kafka:
+        condition: service_healthy
+      init-kafka:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      MIN_INTERVAL: "2.0"
+      MAX_INTERVAL: "10.0"
+      BATCH_SIZE: "10"
+      LOG_LEVEL: "INFO"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+    restart: unless-stopped
+    networks:
+      - vpbank-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 45s
+      timeout: 15s
+      retries: 3
+      start_period: 60s
+
+  init-kafka:
+    image: bitnami/kafka:3.7.0
+    depends_on:
+      kafka:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.1'
+    entrypoint: ['/bin/sh', '-c']
+    command: |
+      "
+      echo 'Waiting for Kafka to be ready...'
+      sleep 30
+      
+      echo 'Creating Kafka topics...'
+      kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic IBFT --partitions 1 --replication-factor 1 --config retention.ms=3600000
+      kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic qr_payments --partitions 1 --replication-factor 1 --config retention.ms=3600000
+      kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic topup_wallet --partitions 1 --replication-factor 1 --config retention.ms=3600000
+      
+      echo 'Topics created successfully!'
+      kafka-topics.sh --bootstrap-server kafka:29092 --list
+      "
+    networks:
+      - vpbank-network
+
+volumes:
+  kafka-data:
+    driver: local
+
+networks:
+  vpbank-network:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/16
