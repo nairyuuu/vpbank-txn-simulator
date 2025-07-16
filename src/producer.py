@@ -22,8 +22,7 @@ class TransactionProducer:
             'retries': 3,
             'retry.backoff.ms': 100,
             'linger.ms': 1,
-            'batch.size': 16384,
-            'compression.type': 'snappy'
+            'batch.size': 16384
         }
         self.producer = Producer(self.producer_config)
         logger.info(f"Connected to Kafka at {config.kafka.bootstrap_servers}")
